@@ -1,64 +1,63 @@
 name: CI
 
+permissions: {}
+
 on:
   pull_request:
   push:
     branches:
       - alpha
       - beta
+      - main
       - master
       - renovate/**
 
 jobs:
-  prepare_jobs:
-    name: 'Prepare: job optimization'
-    runs-on: ubuntu-latest
-    outputs:
-      pr_found: ${{ steps.pr.outputs.pr_found }}
-    steps:
-      - name: Get current PR
-        id: pr
-        uses: 8BitJonny/gh-get-current-pr@3.0.0
-        with:
-          filterOutClosed: true
-          sha: ${{ github.event.pull_request.head.sha }}
+  ci-optimization:
+    name: CI optimization
+    uses: dargmuesli/github-actions/.github/workflows/ci-optimization.yml@661e39fe1c9e484d94c6a5a9d4c9946d57c41771 # 5.1.0
+    permissions:
+      pull-requests: read
   build:
-    needs: prepare_jobs
-    if: needs.prepare_jobs.outputs.pr_found == 'false' || github.event_name == 'pull_request'
-    runs-on: ${{ matrix.os }}
+    needs: ci-optimization
+    if: needs.ci-optimization.outputs.continue == 'true'
     strategy:
       matrix:
         os: [macos-latest, ubuntu-latest, windows-latest]
-        node: ['18','20']
+        node: ['20', '24']
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/setup-node@v4
+      - name: Checkout git repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup package manager
+        run: |
+          npm install -g corepack@latest
+          corepack enable
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
+          cache: pnpm
           node-version: ${{ matrix.node }}
 
-      - name: Setup pnpm
-        run: corepack enable
-
-      - name: checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4
-
-      - name: cache node_modules
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: ${{ matrix.os }}-node-v${{ matrix.node }}-deps-${{ hashFiles(format('{0}{1}', github.workspace, '/pnpm-lock.yaml')) }}
-
       - name: Install dependencies
-        if: steps.cache.outputs.cache-hit != 'true'
         run: pnpm install
 
       - name: Lint
-        run: pnpm lint
-  release-semantic:
+        run: pnpm run lint && pnpm run -r lint
+
+      - name: Build
+        run: pnpm run build && pnpm run -r build
+  release_semantic:
     needs: build
     name: Release (semantic)
-    uses: dargmuesli/github-actions/.github/workflows/release-semantic.yml@1.7.7
+    uses: dargmuesli/github-actions/.github/workflows/release-semantic.yml@661e39fe1c9e484d94c6a5a9d4c9946d57c41771 # 5.1.0
     permissions:
       contents: write
+      id-token: write
     secrets:
-      PERSONAL_ACCESS_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
+    with:
+      INSTALL_NODE_DEPENDENCIES: true
+      GH_APP_ID: ${{ vars.GH_APP_ID }}
